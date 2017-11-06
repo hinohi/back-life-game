@@ -1,9 +1,9 @@
 program main
   use random
   implicit none
-  integer, parameter :: L=8, N=L*L
-  double precision, parameter :: XX=0.8d0
-  integer :: target_spin(0:N-1), spin0(0:N-1), spin1(0:N-1), o(0:N)
+  integer, parameter :: L=4, N=L*L
+  double precision, parameter :: XX=0.95d0, KK=1.d-8
+  integer :: target_spin(L, L), spin0(0:L+1, 0:L+1), spin1(L, L), o(0:N)
   double precision :: hist(0:N), f(0:N), k
   integer :: seed, p, mc, E, ki
 
@@ -12,9 +12,9 @@ program main
   call init_spin
 
   f(:) = 0.d0
-  spin0(:) = 0
+  spin0(:, :) = 0
   o(:) = 0
-  E = sum(target_spin(:))
+  call calc_E(E)
   ki = 1
   k = 1.d0
   write(*, "('init done')")
@@ -28,7 +28,7 @@ program main
            exit
         end if
      end do
-     if (k < 1.d-8) then
+     if (k < KK) then
         exit
      end if
      k = k * 0.5d0
@@ -44,8 +44,8 @@ contains
     character(99) :: name
     write(name, "('data/L', i4.4, '_seed', i4.4, '_p', i4.4, '.spin')") L, seed, p
     open(10, file=trim(name), action="write")
-    do i = 0, L - 1
-       write(10, "(9999i1)") target_spin(i*L:(i+1)*L)
+    do i = 1, L
+       write(10, "(9999i1)") target_spin(:, i)
     end do
     close(10)
 
@@ -66,35 +66,68 @@ contains
   end subroutine output
 
   subroutine init_spin
-    integer :: i, done
+    integer :: i, x, y, done
 
-    target_spin(:) = 0
+    target_spin(:, :) = 0
     done = 0
     do
        if (done >= p) exit
        call rfr(1)
        i = mod(ir(1), N)
-       if (target_spin(i) == 0) then
-          target_spin(i) = 1
+       x = mod(i, L) + 1
+       y = i / L + 1
+       if (target_spin(x, y) == 0) then
+          target_spin(x, y) = 1
           done = done + 1
        end if
     end do
   end subroutine init_spin
+
+  subroutine flip(x, y)
+    integer, intent(in) :: x, y
+
+    spin0(x, y) = 1 - spin0(x, y)
+    if (x == 1) then
+       spin0(L+1, y) = spin0(x, y)
+       if (y == 1) then
+          spin0(L+1, L+1) = spin0(x, y)
+          spin0(x,   L+1) = spin0(x, y)
+       else if (y == L) then
+          spin0(L+1, 0) = spin0(x, y)
+          spin0(x,   0) = spin0(x, y)
+       end if
+    else if (x == L) then
+       spin0(0, y) = spin0(x, y)
+       if (y == 1) then
+          spin0(0, L+1) = spin0(x, y)
+          spin0(x, L+1) = spin0(x, y)
+       else if (y == L) then
+          spin0(0, 0) = spin0(x, y)
+          spin0(x, 0) = spin0(x, y)
+       end if
+    else
+       if (y == 1) then
+          spin0(x, L+1) = spin0(x, y)
+       else if (y == L) then
+          spin0(x, 0) = spin0(x, y)
+       end if
+    end if
+  end subroutine flip
 
   subroutine one_mc
     integer :: mmc, i, E2
     double precision :: df
 
     call rfr(N*2)
-    do mmc = 0, N - 1
-       i = mod(ir(mmc*2+1), N)
-       spin0(i) = 1 - spin0(i)
+    do mmc = 1, N
+       i = mod(ir(mmc*2-1), N)
+       call flip(mod(i, L) + 1, i / L + 1)
        call calc_E(E2)
        df = f(E) - f(E2)
-       if (df > 0.d0 .or. ur(mmc*2+2) < exp(df)) then
+       if (df > 0.d0 .or. ur(mmc*2) < exp(df)) then
           E = E2
        else
-          spin0(i) = 1 - spin0(i)
+          call flip(mod(i, L) + 1, i / L + 1)
        end if
        hist(E) = hist(E) + 1.d0
        f(E) = f(E) + k
@@ -105,25 +138,17 @@ contains
   subroutine calc_E(E2)
     integer, intent(out) :: E2
     integer :: c, x, y
-    do y = 0, L - 1
-       do x = 0, L - 1
-          c = spin0(mod(y-1+L, L)*L + mod(x-1+L, L))
-          c = c + spin0(mod(y-1+L, L)*L + x)
-          c = c + spin0(mod(y-1+L, L)*L + mod(x+1, L))
-          c = c + spin0(y*L + mod(x-1+L, L))
-          c = c + spin0(y*L + x)
-          c = c + spin0(y*L + mod(x+1, L))
-          c = c + spin0(mod(y+1, L)*L + mod(x-1+L, L))
-          c = c + spin0(mod(y+1, L)*L + x)
-          c = c + spin0(mod(y+1, L)*L + mod(x+1, L))
+    do y = 1, L
+       do x = 1, L
+          c = sum(spin0(x-1:x+1, y-1:y+1))
           if (c == 3 .or. c == 4) then
-             spin1(y*L + x) = 1
+             spin1(x, y) = 1
           else
-             spin1(y*L + x) = 0
+             spin1(x, y) = 0
           end if
        end do
     end do
-    E2 = sum(abs(spin1(:) - target_spin(:)))
+    E2 = sum(abs(spin1(:, :) - target_spin(:, :)))
   end subroutine calc_E
 
   integer function is_flat()
